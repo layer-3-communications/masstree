@@ -70,9 +70,9 @@ insertHere t@Masstree{keys,lengths,values} k l v =
         GT -> doInsert i
     | otherwise = doInsert i
   doInsert i = t
-    { keys = Arr.insertAt keys i k
-    , lengths = Arr.insertAt lengths i l
-    , values = Arr.insertAt values i v
+    { keys = Arr.primInsertAt keys i k
+    , lengths = Arr.primInsertAt lengths i l
+    , values = Arr.smallInsertAt values i v
     }
 
 unconsU64 :: Bytes -> Either (Word64, Int) (Word64, Bytes)

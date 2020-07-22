@@ -1,8 +1,12 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE MagicHash #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE UnboxedSums #-}
 
 module Data.Masstree.BTree
   ( BTree(..)
@@ -20,13 +24,12 @@ import Data.Functor.Identity (runIdentity)
 import Data.Primitive (PrimArray)
 import Data.Primitive.SmallArray (SmallArray)
 import Data.Word (Word64)
-
+import GHC.Exts (Int(I#),Int#)
 
 import qualified Data.Primitive.Contiguous as Arr
 import qualified Data.Masstree.Utils as Arr
 import qualified GHC.Exts as Exts
 import qualified Data.Foldable as Foldable
-
 
 fanout :: Int
 fanout = 8
@@ -55,10 +58,10 @@ empty = Leaf{keys=mempty,values=mempty}
 
 -- l <= 8; if l < 8, then pad input bytes with nulls on the left to obtain a Word64
 lookup :: BTree v -> Word64 -> Maybe v
-lookup Leaf{keys,values} k = case findInsRep keys k of
-  Left _ -> Nothing
-  Right i -> Just $ Arr.index values i
-lookup Branch{keys,children} k = lookup (Arr.index children $ findChild keys k) k
+lookup Leaf{keys,values} !k = case findInsRep keys k of
+  RightInt# i -> Just $ Arr.index values (I# i)
+  _ -> Nothing
+lookup Branch{keys,children} !k = lookup (Arr.index children $ findChild keys k) k
 
 
 insert :: BTree v -> Word64 -> v -> BTree v
@@ -69,7 +72,7 @@ data Result v
   | Ok !(BTree v)
 
 upsertF :: forall f v. (Functor f) => (Maybe v -> f v) -> BTree v -> Word64 -> f (BTree v)
-upsertF f root k = go root <&> \case
+upsertF f root !k = go root <&> \case
   Ok root' -> root'
   Split left keyM right -> Branch
     -- unsafeMinKey is ok because an empty tree will never split a node on insert, and therefore never make it to this branch
@@ -80,14 +83,14 @@ upsertF f root k = go root <&> \case
   go :: BTree v -> f (Result v)
   go Leaf{keys,values} = case findInsRep keys k of
     -- replace
-    Right i -> Arr.modifyAtF (f . Just) values i <&> \values' ->
+    RightInt# i -> Arr.modifyAtF (f . Just) values (I# i) <&> \values' ->
       Ok Leaf {keys, values = values' }
     -- insert
     -- TODO? for now I'm just inserting first and splitting later
     -- theoretically, insertAtThenSplitAt should be faster, but it seems it isn't...?
-    Left i -> f Nothing <&> \v ->
-      let keys' = Arr.insertAt keys i k
-          values' = Arr.insertAt values i v
+    LeftInt# i -> f Nothing <&> \v ->
+      let keys' = Arr.primInsertAt keys (I# i) k
+          values' = Arr.smallInsertAt values (I# i) v
        in if Arr.size values' <= fanout
           then Ok
             Leaf {keys = keys', values = values'}
@@ -105,9 +108,9 @@ upsertF f root k = go root <&> \case
         Split left keyM right ->
           -- TODO for now I'm just inserting first and splitting later
           -- I could avoid some memory copying if I figured out destinations ahead-of-time
-          let keys' = Arr.insertAt keys i keyM
+          let keys' = Arr.primInsertAt keys i keyM
               -- TODO replace after insertAt? what hilarious amounts of copying!
-              children' = Arr.replaceAt (Arr.insertAt children i left) (i + 1) right
+              children' = Arr.replaceAt (Arr.smallInsertAt children i left) (i + 1) right
            in if Arr.size children' <= fanout
               then Ok
                 Branch {keys = keys', children = children'}
@@ -126,15 +129,25 @@ upsertF f root k = go root <&> \case
           , children = Arr.replaceAt children i child'
           }
 
+type EitherIntInt# = (# Int# | Int# #) 
+
+pattern LeftInt# :: Int# -> EitherIntInt#
+pattern LeftInt# x = (# x | #)
+
+pattern RightInt# :: Int# -> EitherIntInt#
+pattern RightInt# x = (# | x #)
+
+{-# COMPLETE LeftInt#, RightInt# #-}
+
 -- WARNING xs, ys must have same size
 -- given a (ascending) sorted array, find the index of the given key, or else find the index where they key should be inserted
 -- right for found key, left for insert point
-findInsRep :: PrimArray Word64 -> Word64 -> Either Int Int
-findInsRep keys k = case Arr.findIndex (k <=) keys of
-  Just i
-    | Arr.index keys i == k -> Right i
-    | otherwise -> Left i
-  Nothing -> Left $ Arr.size keys
+findInsRep :: PrimArray Word64 -> Word64 -> EitherIntInt#
+findInsRep !keys !k = case Arr.findIndex (k <=) keys of
+  Just i@(I# i#)
+    | Arr.index keys i == k -> RightInt# i#
+    | otherwise -> LeftInt# i#
+  Nothing -> case Arr.size keys of { I# sz# -> LeftInt# sz# }
 
 -- find the index of a child to recurse into given a key to search for
 findChild :: PrimArray Word64 -> Word64 -> Int

@@ -1,18 +1,25 @@
+{-# language BangPatterns #-}
+
 module Data.Masstree.Utils where
 
 import Prelude hiding (splitAt)
 -- FIXME merge these utilities upstream where it makes sense
 -- then use anmed imports
 import Data.Primitive.Contiguous
+import Data.Primitive (Prim)
 
+import Data.Word (Word64)
 import Control.Monad.ST (runST)
+import Control.Monad.ST.Run (runSmallArrayST,runPrimArrayST)
 
 checkedIndex :: (Contiguous arr, Element arr a) => arr a -> Int -> Maybe a
+{-# inline checkedIndex #-}
 checkedIndex xs i
   | i < size xs = Just $ index xs i
   | otherwise = Nothing
 
 findIndex :: (Contiguous arr, Element arr a) => (a -> Bool) -> arr a -> Maybe Int
+{-# inline findIndex #-}
 findIndex p xs = loop 0
   where
   loop i
@@ -21,6 +28,7 @@ findIndex p xs = loop 0
 
 -- create a copy of the given array except the given index is replaced with the given value
 replaceAt :: (Contiguous arr, Element arr a) => arr a -> Int -> a -> arr a
+{-# inline replaceAt #-}
 replaceAt src i x = create $ do
   dst <- thaw src 0 (size src)
   write dst i x
@@ -28,20 +36,36 @@ replaceAt src i x = create $ do
 
 modifyAtF :: (Contiguous arr, Element arr a, Functor f)
   => (a -> f a) -> arr a -> Int -> f (arr a)
+{-# inline modifyAtF #-}
 modifyAtF f src i = replaceAt src i <$> f (index src i)
 
 -- insert element so that it becomes the new element at the given index
--- the preceding elements remain unchanged, and the successding elemetn indexes are shifted over
-insertAt :: (Contiguous arr, Element arr a) => arr a -> Int -> a -> arr a
-insertAt src i x = create $ do
+-- the preceding elements remain unchanged, and the successding element
+-- indexes are shifted over
+smallInsertAt :: SmallArray a -> Int -> a -> SmallArray a
+smallInsertAt !src !i !x = runSmallArrayST $ do
   let len0 = size src
   dst <- replicateMutable (len0 + 1) x
   copy dst 0 src 0 i
   copy dst (i + 1) src i (len0 - i)
-  pure dst
+  unsafeFreeze dst
 
--- split the given array at the given index (so that the length of the first is equal to the given index)
+-- Copy of smallInsertAt. PrimArray can skip the memset the SmallArray
+-- must endure.
+primInsertAt :: Prim a => PrimArray a -> Int -> a -> PrimArray a
+{-# inline primInsertAt #-}
+primInsertAt !src !i !x = runPrimArrayST $ do
+  let len0 = size src
+  dst <- new (len0 + 1)
+  write dst i x
+  copy dst 0 src 0 i
+  copy dst (i + 1) src i (len0 - i)
+  unsafeFreeze dst
+
+-- split the given array at the given index (so that the length of the first
+-- is equal to the given index)
 splitAt :: (Contiguous arr, Element arr a) => arr a -> Int -> (arr a, arr a)
+{-# inline splitAt #-}
 splitAt src lenL =
   let lenR = size src - lenL
    in (clone src 0 lenL, clone src lenL lenR)
