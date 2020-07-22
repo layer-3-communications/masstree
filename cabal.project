@@ -1,0 +1,6 @@
+packages: .
+
+source-repository-package
+    type: git
+    location: https://github.com/andrewthad/contiguous.git
+    tag: ab3d3f3541b8fd7972c5ab2e9584d5b285c06d30
