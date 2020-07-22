@@ -30,9 +30,8 @@ replaceAt src i x = create $ do
 insertAt :: (Contiguous arr, Element arr a) => arr a -> Int -> a -> arr a
 insertAt src i x = create $ do
   let len0 = size src
-  dst <- new (len0 + 1)
+  dst <- replicateMutable (len0 + 1) x
   copy dst 0 src 0 i
-  write dst i x
   copy dst (i + 1) src i (len0 - i)
   pure dst
 

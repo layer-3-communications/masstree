@@ -8,7 +8,7 @@ import Prelude hiding (lookup)
 import Data.Maybe (fromMaybe)
 import Data.Primitive (PrimArray)
 import Data.Primitive.SmallArray (SmallArray)
-import Data.Word (Word8,Word64)
+import Data.Word (Word64)
 
 
 import qualified Data.Primitive.Contiguous as Arr
@@ -17,6 +17,15 @@ import qualified Data.Masstree.Utils as Arr
 
 fanout :: Int
 fanout = 8
+
+data Masstree v = Masstree
+  { lengths :: PrimArray Int
+  -- ^ lengths of entries at this node (1-8); parallels `entries`
+  , entries :: SmallArray v
+  -- ^ entries with lengths 1-8; parallels `lengths`
+  , next :: BTreeU64 v
+  -- ^ the next layer of nodes for entires with lengths > 8
+  }
 
 data BTreeU64 v
   = Branch
@@ -30,41 +39,22 @@ data BTreeU64 v
     }
   | Leaf
     { keys :: PrimArray Word64
-    , keyLens :: PrimArray Word8
-    -- INVARIANT: same length as keys
-    , values :: SmallArray v
+    , values :: SmallArray v -- FIXME SmallArray (Masstree v)
     -- INVARIANT: keys and values are the same length and non-empty
     }
 
-empty :: BTreeU64 a
-empty = Leaf {keys = Arr.empty, keyLens = Arr.empty, values = Arr.empty}
-
-singleton :: Word64 -> Word8 -> a -> BTreeU64 a
-singleton k l v = Leaf
-  { keys = Arr.singleton k
-  , keyLens = Arr.singleton l
-  , values = Arr.singleton v
-  }
 
 -- l <= 8; if l < 8, then pad input bytes with nulls on the left to obtain a Word64
-lookup :: BTreeU64 v -> Word64 -> Word8 -> Maybe v
-lookup Leaf{keys,keyLens,values} k l =
-  go $ fromMaybe (Arr.size keys) (Arr.findIndex (==k) keys)
-  where
-  go i
-    | i < Arr.size keys
-    , Arr.index keys i == k
-    = case compare (Arr.index keyLens i) l of
-        LT -> go (i + 1)
-        EQ -> Just $ Arr.index values i
-        GT -> Nothing
-    | otherwise = Nothing
-lookup Branch{keys,children} k l = case Arr.findIndex (< k) keys of
-  Just i -> lookup (Arr.index children i) k l
-  Nothing -> lookup (Arr.index children (Arr.size keys)) k l -- look in the last child
+lookup :: BTreeU64 v -> Word64 -> Maybe v
+lookup Leaf{keys,values} k = case findInsRep keys k of
+  Left _ -> Nothing
+  Right i -> Just $ Arr.index values i
+lookup Branch{keys,children} k = case Arr.findIndex (< k) keys of
+  Just i -> lookup (Arr.index children i) k
+  Nothing -> lookup (Arr.index children (Arr.size keys)) k -- look in the last child
 
-insert :: forall v. BTreeU64 v -> Word64 -> Word8 -> v -> BTreeU64 v
-insert root k l v = case go root of
+insert :: forall v. BTreeU64 v -> Word64 -> v -> BTreeU64 v
+insert root k v = case go root of
   Right root' -> root'
   Left (left, keyM, right) -> Branch
     -- unsafeMinKey is ok because an empty tree will never split a node on insert, and therefore never make it to this branch
@@ -73,28 +63,26 @@ insert root k l v = case go root of
     }
   where
   go :: BTreeU64 v -> Either (BTreeU64 v, Word64, BTreeU64 v) (BTreeU64 v)
-  go Leaf{keys,keyLens,values} = case findInsRep keys k keyLens l of
+  go Leaf{keys,values} = case findInsRep keys k of
     -- replace
-    Left i -> Right
-      Leaf {keys, keyLens, values = Arr.replaceAt values i v}
+    Right i -> Right
+      Leaf {keys, values = Arr.replaceAt values i v}
     -- insert
     -- TODO for now I'm just inserting first and splitting later
     -- I could avoid some memory copying if I figured out destinations ahead-of-time
-    Right i ->
+    Left i ->
       let keys' = Arr.insertAt keys i k
-          keyLens' = Arr.insertAt keyLens i l
           values' = Arr.insertAt values i v
        in if Arr.size values' <= fanout
           then Right
-            Leaf {keys = keys', keyLens = keyLens', values = values'}
+            Leaf {keys = keys', values = values'}
           else
             let at = (Arr.size keys `div` 2) + 1
                 (keysL, keysR) = Arr.splitAt keys' at
                 keyM = Arr.index keysR 0
-                (keyLensL, keyLensR) = Arr.splitAt keyLens' at
                 (valuesL, valuesR) = Arr.splitAt values' at
-                left = Leaf{keys = keysL, keyLens = keyLensL, values = valuesL}
-                right = Leaf{keys = keysR, keyLens = keyLensR, values = valuesR}
+                left = Leaf{keys = keysL, values = valuesL}
+                right = Leaf{keys = keysR, values = valuesR}
              in Left (left, keyM, right)
   go Branch{keys,children} =
     let i = fromMaybe (Arr.size keys) (Arr.findIndex (<= k) keys)
@@ -123,17 +111,11 @@ insert root k l v = case go root of
           }
 
 -- WARNING xs, ys must have same size
--- left for insert, right for replace
-findInsRep :: PrimArray Word64 -> Word64 -> PrimArray Word8 -> Word8 -> Either Int Int
-findInsRep keys k lengths l =
-  let i0 = fromMaybe (Arr.size keys) (Arr.findIndex (k <) keys)
-   in loop i0
-  where
-  loop i
-    | i < Arr.size keys
-    , Arr.index keys i == k
-    = case compare (Arr.index lengths i) l of
-        LT -> loop (i + 1)
-        EQ -> Left i
-        GT -> Right i
-    | otherwise = Right i
+-- given a (ascending) sorted array, find the index of the given key, or else find the index where they key should be inserted
+-- right for found key, left for insert point
+findInsRep :: PrimArray Word64 -> Word64 -> Either Int Int
+findInsRep keys k = case Arr.findIndex (k <=) keys of
+  Just i
+    | Arr.index keys i == k -> Right i
+    | otherwise -> Left i
+  Nothing -> Left $ Arr.size keys
