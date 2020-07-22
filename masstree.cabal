@@ -19,6 +19,7 @@ extra-source-files: CHANGELOG.md
 library
   exposed-modules:
     Data.Masstree
+    Data.Masstree.BTree
   other-modules:
     Data.Masstree.Utils
   -- other-extensions:
