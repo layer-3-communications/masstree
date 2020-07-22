@@ -34,22 +34,26 @@ tests :: TestTree
 tests = testGroup "Tests"
   [ testGroup "BTree"
     [ TQC.testProperty "order-invariant" $ \(Keys xs) ->
-        let ys = map (\x -> (fromIntegral x,x)) xs in
+        let ys = map (\x -> (x,x)) xs in
         checkOrderInvariant (BTree.fromList ys)
     , TQC.testProperty "height-invariant" $ \(Keys xs) ->
-        let ys = map (\x -> (fromIntegral x,x)) xs in
+        let ys = map (\x -> (x,x)) xs in
         checkHeightInvariant (BTree.fromList ys)
     , lawsToTest (QCC.monoidLaws (Proxy :: Proxy (BTree Integer)))
     , TQC.testProperty "fromList-toList-keys" $ \(Keys xs) ->
-        let ys = map (\x -> (fromIntegral x,x)) xs in
+        let ys = map (\x -> (x,x)) xs in
         sortList (map fst ys)
         ===
         map fst (BTree.toList (BTree.fromList ys))
     , TQC.testProperty "fromList-toList" $ \(Keys xs) ->
-        let ys = map (\x -> (fromIntegral x,x)) xs in
+        let ys = map (\x -> (x,x)) xs in
         Map.toList (Map.fromList ys)
         ===
         BTree.toList (BTree.fromList ys)
+    , TQC.testProperty "lookup" $ \(Keys xs) ->
+        let ys = map (\x -> (x,x)) xs
+            bt = BTree.fromList ys
+         in all (\x -> BTree.lookup bt x == Just x) xs
     ]
   ]
 
