@@ -46,6 +46,7 @@ data BTree v
     , values :: !(SmallArray v)
     -- INVARIANT: keys and values are the same length and non-empty
     }
+  deriving (Show) -- DEBUG
 
 empty :: BTree v
 empty = Leaf{keys=mempty,values=mempty}
@@ -91,7 +92,11 @@ insert root k v = case go root of
                 right = Leaf{keys = keysR, values = valuesR}
              in Left (left, keyM, right)
   go Branch{keys,children} =
-    let i = fromMaybe (Arr.size keys) (Arr.findIndex (<= k) keys)
+    let findI j
+          | j >= Arr.size keys = j
+          | k >= Arr.index keys j = findI (j + 1)
+          | otherwise = j
+        i = findI 0
      in case go (Arr.index children i) of
         Left (left, keyM, right) ->
           -- TODO for now I'm just inserting first and splitting later
@@ -128,7 +133,7 @@ findInsRep keys k = case Arr.findIndex (k <=) keys of
   Nothing -> Left $ Arr.size keys
 
 -- | Lazy right foldr over all key-value pairs in a BTree.
-foldrWithKey :: forall v b. (Word64 -> v -> b -> b) -> b -> BTree v -> b 
+foldrWithKey :: forall v b. (Word64 -> v -> b -> b) -> b -> BTree v -> b
 foldrWithKey f b0 tree0 = go tree0 b0
   where
   go :: BTree v -> b -> b
@@ -165,6 +170,7 @@ instance Exts.IsList (BTree v) where
   toList = toList
   fromList = fromList
 
--- | Shows a list of key-value pairs present in the BTree.
-instance Show v => Show (BTree v) where
-  showsPrec d b = showsPrec d (toList b)
+-- DEBUG real version
+-- -- | Shows a list of key-value pairs present in the BTree.
+-- instance Show v => Show (BTree v) where
+--   showsPrec d b = showsPrec d (toList b)
