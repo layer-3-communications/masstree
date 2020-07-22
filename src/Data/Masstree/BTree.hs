@@ -46,7 +46,6 @@ data BTree v
     , values :: !(SmallArray v)
     -- INVARIANT: keys and values are the same length and non-empty
     }
-  deriving (Show) -- DEBUG
 
 empty :: BTree v
 empty = Leaf{keys=mempty,values=mempty}
@@ -109,10 +108,10 @@ insert root k v = case go root of
                 Branch {keys = keys', children = children'}
               else
                 let at = (Arr.size children `div` 2) + 1
-                    keysL' = Arr.clone keys 0 (at - 1)
-                    keyM' = Arr.index keys (at - 1)
-                    keysR' = Arr.clone keys at (Arr.size keys - at)
-                    (childrenL, childrenR) = Arr.splitAt children at
+                    keysL' = Arr.clone keys' 0 (at - 1)
+                    keyM' = Arr.index keys' (at - 1)
+                    keysR' = Arr.clone keys' at (Arr.size keys' - at)
+                    (childrenL, childrenR) = Arr.splitAt children' at
                     left' = Branch {keys = keysL', children = childrenL}
                     right' = Branch {keys = keysR', children = childrenR}
                  in Left (left', keyM', right')
@@ -170,7 +169,6 @@ instance Exts.IsList (BTree v) where
   toList = toList
   fromList = fromList
 
--- DEBUG real version
--- -- | Shows a list of key-value pairs present in the BTree.
--- instance Show v => Show (BTree v) where
---   showsPrec d b = showsPrec d (toList b)
+-- | Shows a list of key-value pairs present in the BTree.
+instance Show v => Show (BTree v) where
+  showsPrec d b = showsPrec d (toList b)
