@@ -12,6 +12,7 @@
 
 import Control.Monad (when)
 import Data.Masstree.BTree (BTree)
+import Data.Maybe (isJust)
 import Data.Proxy (Proxy(Proxy))
 import Data.Semigroup (Sum,First)
 import Data.Word (Word8,Word64)
@@ -35,6 +36,9 @@ tests = testGroup "Tests"
     [ TQC.testProperty "order-invariant" $ \(Keys xs) ->
         let ys = map (\x -> (fromIntegral x,x)) xs in
         checkOrderInvariant (BTree.fromList ys)
+    , TQC.testProperty "height-invariant" $ \(Keys xs) ->
+        let ys = map (\x -> (fromIntegral x,x)) xs in
+        checkHeightInvariant (BTree.fromList ys)
     , lawsToTest (QCC.monoidLaws (Proxy :: Proxy (BTree Integer)))
     , TQC.testProperty "fromList-toList-keys" $ \(Keys xs) ->
         let ys = map (\x -> (fromIntegral x,x)) xs in
@@ -91,6 +95,23 @@ instance TQC.Arbitrary v => TQC.Arbitrary (BTree v) where
                      , values = Arr.clone values 0 (sz - 1)
                      }
                  ]
+
+checkHeightInvariant :: BTree v -> Bool
+checkHeightInvariant = isJust . go
+  where
+  go :: BTree v -> Maybe Int
+  go = \case
+    BTree.Leaf{} -> Just 0
+    BTree.Branch{children} -> case PM.sizeofSmallArray children of
+      -- Returning zero when there are no children is kind of
+      -- a trick. This should only happen when the root is empty.
+      0 -> Just 0
+      _ -> do
+        hs <- traverse go children
+        let h0 = PM.indexSmallArray hs 0
+        if (Arr.all (\h -> h == h0) hs)
+          then Just h0
+          else Nothing
 
 checkOrderInvariant :: BTree v -> Bool
 checkOrderInvariant = go where
