@@ -25,6 +25,7 @@ library
   -- other-extensions:
   build-depends:
     , base >=4.12
+    , byteslice >=0.2.3.0
     , contiguous >=0.5.1
     , primitive >=0.7
   hs-source-dirs: src
