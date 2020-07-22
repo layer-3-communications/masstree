@@ -86,7 +86,46 @@ checkOrderInvariant :: BTree v -> Bool
 checkOrderInvariant = go where
   go = \case
     BTree.Leaf{keys} -> isSorted keys
-    BTree.Branch{children} -> all go children
+    BTree.Branch{keys,children} ->
+      all go children
+      &&
+      isSorted keys
+      &&
+      checkOrderInvariantChildren keys children
+
+checkOrderInvariantChildren :: PM.PrimArray Word64 -> PM.SmallArray (BTree v) -> Bool
+checkOrderInvariantChildren keys children
+  | ksz + 1 /= csz = False
+  | otherwise =
+      Arr.all
+        (\k -> k >= PM.indexPrimArray keys (ksz - 1))
+        (rootKeys (PM.indexSmallArray children ksz))
+      &&
+      Arr.all
+        (\k -> k < PM.indexPrimArray keys 0)
+        (rootKeys (PM.indexSmallArray children 0))
+      &&
+      go (ksz - 2) (ksz - 1) (ksz - 1)
+  where
+  ksz = Arr.size keys
+  csz = Arr.size children
+  go !ixKeyLo !ixKeyHi !ixChild = if ixKeyLo == (-1)
+    then True
+    else
+      Arr.all
+        (\k -> k >= PM.indexPrimArray keys ixKeyLo)
+        (rootKeys (PM.indexSmallArray children ixChild))
+      &&
+      Arr.all
+        (\k -> k < PM.indexPrimArray keys ixKeyHi)
+        (rootKeys (PM.indexSmallArray children ixChild))
+      &&
+      go (ixKeyLo - 1) (ixKeyHi - 1) (ixChild - 1)
+
+rootKeys :: BTree v -> PM.PrimArray Word64
+rootKeys = \case
+  BTree.Leaf{keys} -> keys
+  BTree.Branch{keys} -> keys
 
 isSorted :: PM.PrimArray Word64 -> Bool
 isSorted xs = if sz < 1
