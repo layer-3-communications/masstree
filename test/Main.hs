@@ -1,5 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# language LambdaCase #-}
 {-# language MultiWayIf #-}
 {-# language NamedFieldPuns #-}
@@ -16,6 +18,7 @@ import Data.Word (Word8,Word64)
 import Test.Tasty (defaultMain,testGroup,TestTree)
 import Test.Tasty.QuickCheck ((===))
 
+import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import qualified Data.Primitive as PM
 import qualified Data.Primitive.Contiguous as Arr
@@ -29,13 +32,20 @@ main = defaultMain tests
 tests :: TestTree
 tests = testGroup "Tests"
   [ testGroup "BTree"
-    [ TQC.testProperty "order-invariant" $ \(xs :: [(Word64,Word8)]) ->
-        checkOrderInvariant (BTree.fromList xs)
+    [ TQC.testProperty "order-invariant" $ \(Keys xs) ->
+        let ys = map (\x -> (fromIntegral x,x)) xs in
+        checkOrderInvariant (BTree.fromList ys)
     , lawsToTest (QCC.monoidLaws (Proxy :: Proxy (BTree Integer)))
-    , TQC.testProperty "fromList-toList" $ \(xs :: [(Word64,Word8)]) ->
-        Map.toList (Map.fromList xs)
+    , TQC.testProperty "fromList-toList-keys" $ \(Keys xs) ->
+        let ys = map (\x -> (fromIntegral x,x)) xs in
+        sortList (map fst ys)
         ===
-        BTree.toList (BTree.fromList xs)
+        map fst (BTree.toList (BTree.fromList ys))
+    , TQC.testProperty "fromList-toList" $ \(Keys xs) ->
+        let ys = map (\x -> (fromIntegral x,x)) xs in
+        Map.toList (Map.fromList ys)
+        ===
+        BTree.toList (BTree.fromList ys)
     ]
   ]
 
@@ -46,11 +56,12 @@ lawsToTest (QCC.Laws name pairs) =
 instance TQC.Arbitrary v => TQC.Arbitrary (BTree v) where
   arbitrary = BTree.fromList <$> TQC.arbitrary
   shrink = \case
-    BTree.Branch{keys,children} -> 
+    BTree.Branch{keys,children} ->
       let ksz = Arr.size keys
           csz = Arr.size children
        in if | ksz + 1 /= csz ->
                  error "Keys and children had disagreeing lengths. Dieing."
+             | ksz == 0 -> error "Impossible key size"
              | ksz == 1 -> []
              | otherwise ->
                  [ BTree.Branch
@@ -69,6 +80,7 @@ instance TQC.Arbitrary v => TQC.Arbitrary (BTree v) where
        in if | ksz /= vsz ->
                  error "Keys and values had different lengths. Dieing."
              | sz == 0 -> []
+             | sz == 1 -> [BTree.empty]
              | otherwise -> 
                  [ BTree.Leaf
                      { keys = Arr.clone keys 1 (sz - 1)
@@ -80,8 +92,6 @@ instance TQC.Arbitrary v => TQC.Arbitrary (BTree v) where
                      }
                  ]
 
--- This does not totally check the order invariant yet.
--- TODO: finish this.
 checkOrderInvariant :: BTree v -> Bool
 checkOrderInvariant = go where
   go = \case
@@ -140,3 +150,17 @@ isSorted xs = if sz < 1
        in if element < successor
             then go element (ix - 1)
             else False
+
+-- This is only here to help GHC give us more accurate profiling information.
+-- For some reason, either cabal or GHC cannot be coaxed into showing the
+-- amount of time spent in functions in Data.List.
+sortList :: [Word64] -> [Word64]
+{-# noinline sortList #-}
+sortList xs = List.nub (List.sort xs)
+
+newtype Keys = Keys { unKeys :: [Word64] }
+  deriving newtype (Show)
+
+instance TQC.Arbitrary Keys where
+  arbitrary = Keys <$> TQC.vectorOf 100 (TQC.choose (0,200))
+  shrink = map Keys . TQC.shrinkList (\_ -> []) . unKeys

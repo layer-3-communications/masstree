@@ -5,6 +5,7 @@
 
 module Data.Masstree.BTree
   ( BTree(..)
+  , empty
   , lookup
   , insert
   , toList
