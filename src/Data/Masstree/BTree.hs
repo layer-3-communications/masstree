@@ -56,9 +56,7 @@ lookup :: BTree v -> Word64 -> Maybe v
 lookup Leaf{keys,values} k = case findInsRep keys k of
   Left _ -> Nothing
   Right i -> Just $ Arr.index values i
-lookup Branch{keys,children} k = case Arr.findIndex (< k) keys of
-  Just i -> lookup (Arr.index children i) k
-  Nothing -> lookup (Arr.index children (Arr.size keys)) k -- look in the last child
+lookup Branch{keys,children} k = lookup (Arr.index children $ findChild keys k) k
 
 insert :: forall v. BTree v -> Word64 -> v -> BTree v
 insert root k v = case go root of
@@ -92,11 +90,7 @@ insert root k v = case go root of
                 right = Leaf{keys = keysR, values = valuesR}
              in Left (left, keyM, right)
   go Branch{keys,children} =
-    let findI j
-          | j >= Arr.size keys = j
-          | k >= Arr.index keys j = findI (j + 1)
-          | otherwise = j
-        i = findI 0
+    let i = findChild keys k
      in case go (Arr.index children i) of
         Left (left, keyM, right) ->
           -- TODO for now I'm just inserting first and splitting later
@@ -131,6 +125,15 @@ findInsRep keys k = case Arr.findIndex (k <=) keys of
     | Arr.index keys i == k -> Right i
     | otherwise -> Left i
   Nothing -> Left $ Arr.size keys
+
+-- find the index of a child to recurse into given a key to search for
+findChild :: PrimArray Word64 -> Word64 -> Int
+findChild keys k = go 0
+  where
+  go i
+    | i >= Arr.size keys = Arr.size keys
+    | k >= Arr.index keys i = go (i + 1)
+    | otherwise = i
 
 -- | Lazy right foldr over all key-value pairs in a BTree.
 foldrWithKey :: forall v b. (Word64 -> v -> b -> b) -> b -> BTree v -> b
