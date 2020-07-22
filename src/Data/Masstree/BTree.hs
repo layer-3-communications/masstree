@@ -1,4 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -14,7 +15,8 @@ module Data.Masstree.BTree
 
 import Prelude hiding (lookup)
 
-import Data.Maybe (fromMaybe)
+import Data.Functor ((<&>))
+import Data.Functor.Identity (runIdentity)
 import Data.Primitive (PrimArray)
 import Data.Primitive.SmallArray (SmallArray)
 import Data.Word (Word64)
@@ -58,8 +60,12 @@ lookup Leaf{keys,values} k = case findInsRep keys k of
   Right i -> Just $ Arr.index values i
 lookup Branch{keys,children} k = lookup (Arr.index children $ findChild keys k) k
 
-insert :: forall v. BTree v -> Word64 -> v -> BTree v
-insert root k v = case go root of
+
+insert :: BTree v -> Word64 -> v -> BTree v
+insert t k v = runIdentity $ upsertF (pure . const v) t k
+
+upsertF :: forall f v. (Functor f) => (Maybe v -> f v) -> BTree v -> Word64 -> f (BTree v)
+upsertF f root k = go root <&> \case
   Right root' -> root'
   Left (left, keyM, right) -> Branch
     -- unsafeMinKey is ok because an empty tree will never split a node on insert, and therefore never make it to this branch
@@ -67,15 +73,15 @@ insert root k v = case go root of
     , children = Arr.doubleton left right
     }
   where
-  go :: BTree v -> Either (BTree v, Word64, BTree v) (BTree v)
+  go :: BTree v -> f (Either (BTree v, Word64, BTree v) (BTree v))
   go Leaf{keys,values} = case findInsRep keys k of
     -- replace
-    Right i -> Right
-      Leaf {keys, values = Arr.replaceAt values i v}
+    Right i -> Arr.modifyAtF (f . Just) values i <&> \values' ->
+      Right Leaf {keys, values = values' }
     -- insert
     -- TODO for now I'm just inserting first and splitting later
     -- I could avoid some memory copying if I figured out destinations ahead-of-time
-    Left i ->
+    Left i -> f Nothing <&> \v ->
       let keys' = Arr.insertAt keys i k
           values' = Arr.insertAt values i v
        in if Arr.size values' <= fanout
@@ -91,7 +97,7 @@ insert root k v = case go root of
              in Left (left, keyM, right)
   go Branch{keys,children} =
     let i = findChild keys k
-     in case go (Arr.index children i) of
+     in go (Arr.index children i) <&> \case
         Left (left, keyM, right) ->
           -- TODO for now I'm just inserting first and splitting later
           -- I could avoid some memory copying if I figured out destinations ahead-of-time

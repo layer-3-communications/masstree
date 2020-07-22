@@ -25,6 +25,10 @@ replaceAt src i x = create $ do
   write dst i x
   pure dst
 
+modifyAtF :: (Contiguous arr, Element arr a, Functor f)
+  => (a -> f a) -> arr a -> Int -> f (arr a)
+modifyAtF f src i = replaceAt src i <$> f (index src i)
+
 -- insert element so that it becomes the new element at the given index
 -- the preceding elements remain unchanged, and the successding elemetn indexes are shifted over
 insertAt :: (Contiguous arr, Element arr a) => arr a -> Int -> a -> arr a
