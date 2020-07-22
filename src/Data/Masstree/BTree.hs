@@ -83,8 +83,8 @@ upsertF f root k = go root <&> \case
     Right i -> Arr.modifyAtF (f . Just) values i <&> \values' ->
       Ok Leaf {keys, values = values' }
     -- insert
-    -- TODO for now I'm just inserting first and splitting later
-    -- I could avoid some memory copying if I figured out destinations ahead-of-time
+    -- TODO? for now I'm just inserting first and splitting later
+    -- theoretically, insertAtThenSplitAt should be faster, but it seems it isn't...?
     Left i -> f Nothing <&> \v ->
       let keys' = Arr.insertAt keys i k
           values' = Arr.insertAt values i v

@@ -1,5 +1,6 @@
 module Data.Masstree.Utils where
 
+import Prelude hiding (splitAt)
 -- FIXME merge these utilities upstream where it makes sense
 -- then use anmed imports
 import Data.Primitive.Contiguous
@@ -44,3 +45,23 @@ splitAt :: (Contiguous arr, Element arr a) => arr a -> Int -> (arr a, arr a)
 splitAt src lenL =
   let lenR = size src - lenL
    in (clone src 0 lenL, clone src lenL lenR)
+
+-- insert an element into an array, then split it
+-- performs less copying than using `insertAt` and `splitAt` separately
+insertAtThenSplitAt :: (Contiguous arr, Element arr a)
+  => arr a -> Int -> a -> Int -> (arr a, arr a)
+insertAtThenSplitAt src insIx x splIx
+  | insIx < splIx = runST $ do -- inserted element ends up in dstL
+      dstL <- replicateMutable splIx x
+      copy dstL 0 src 0 insIx
+      copy dstL (insIx + 1) src insIx (splIx - insIx - 1)
+      left <- unsafeFreeze dstL
+      let right = clone src (splIx - 1) (size src - splIx + 1)
+      pure (left, right)
+  | otherwise = runST $ do -- inserted element ends up in dstR
+    let left = clone src 0 splIx
+    dstR <- replicateMutable (size src + 1 - splIx) x
+    copy dstR 0 src splIx (insIx - splIx)
+    copy dstR (insIx - splIx + 1) src insIx (size src - insIx)
+    right <- unsafeFreeze dstR
+    pure (left, right)
