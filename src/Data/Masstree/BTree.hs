@@ -13,6 +13,7 @@ module Data.Masstree.BTree
   , empty
   , lookup
   , insert
+  , upsertF
   , toList
   , fromList
   ) where
@@ -24,6 +25,7 @@ import Data.Functor.Identity (runIdentity)
 import Data.Primitive (PrimArray)
 import Data.Primitive.SmallArray (SmallArray)
 import Data.Word (Word64)
+import Control.Monad.ST (ST)
 import GHC.Exts (Int(I#),Int#)
 
 import qualified Data.Primitive.Contiguous as Arr
@@ -72,6 +74,8 @@ data Result v
   | Ok !(BTree v)
 
 upsertF :: forall f v. (Functor f) => (Maybe v -> f v) -> BTree v -> Word64 -> f (BTree v)
+{-# INLINABLE upsertF #-}
+{-# SPECIALIZE upsertF :: (Maybe v -> ST s v) -> BTree v -> Word64 -> ST s (BTree v) #-}
 upsertF f root !k = go root <&> \case
   Ok root' -> root'
   Split left keyM right -> Branch
