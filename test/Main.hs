@@ -10,12 +10,10 @@
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-import Control.Monad (when)
 import Data.Masstree.BTree (BTree)
 import Data.Maybe (isJust)
 import Data.Proxy (Proxy(Proxy))
-import Data.Semigroup (Sum,First)
-import Data.Word (Word8,Word64)
+import Data.Word (Word64)
 import Test.Tasty (defaultMain,testGroup,TestTree)
 import Test.Tasty.QuickCheck ((===))
 

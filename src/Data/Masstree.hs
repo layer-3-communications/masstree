@@ -31,22 +31,47 @@ data Masstree v = Masstree
   , next :: BTree (Masstree v)
   -- ^ the next layer of nodes for entires with lengths > 8
   }
+  -- TODO a run of `8*n` bytes
+
+empty :: Masstree v
+empty = Masstree
+  { keys = Arr.empty
+  , lengths = Arr.empty
+  , values = Arr.empty
+  , next = BTree.empty
+  }
+
+singleton :: Bytes -> v -> Masstree v
+singleton k v = case unconsU64 k of
+  Left (padded, len) -> empty
+    { keys = Arr.singleton padded
+    , lengths = Arr.singleton len
+    , values = Arr.singleton v
+    }
+  Right (prefix, keyRest) ->
+    empty{next = BTree.singleton prefix (singleton keyRest v)}
+
+
 
 lookup :: Bytes -> Masstree v -> Maybe v
 lookup k t@Masstree{next} = case unconsU64 k of
-  Left (padded, len) -> lookupHere t padded len
+  Left (padded, len) -> lookupHere padded len t
   Right (prefix, keyRest) -> lookup keyRest =<< BTree.lookup next prefix
 
-insert :: Masstree v -> Bytes -> v -> Masstree v
-insert t k v = case unconsU64 k of
-  Left (padded, len) -> insertHere t padded len v
-  Right (prefix, keyRest) -> undefined -- TODO BTree.insertWith (\treeRest -> insert treeRest keyRest v)
+insert :: Bytes -> v -> Masstree v -> Masstree v
+insert k v t = case unconsU64 k of
+  Left (padded, len) -> insertHere padded len v t
+  Right (prefix, keyRest) ->
+    t{next = BTree.insertWith (const recurse) prefix base (next t)}
+    where
+    recurse treeRest = insert keyRest v treeRest
+    base = singleton keyRest v
 
 
 ------------------ Helpers ------------
 
-lookupHere :: Masstree v -> Word64 -> Int -> Maybe v
-lookupHere Masstree{keys,lengths,values} k l = go =<< Arr.findIndex (<= k) keys
+lookupHere :: Word64 -> Int -> Masstree v -> Maybe v
+lookupHere k l Masstree{keys,lengths,values} = go =<< Arr.findIndex (<= k) keys
   where
   go i
     | i < Arr.size keys
@@ -57,8 +82,8 @@ lookupHere Masstree{keys,lengths,values} k l = go =<< Arr.findIndex (<= k) keys
         GT -> Nothing
     | otherwise = Nothing
 
-insertHere :: Masstree v -> Word64 -> Int -> v -> Masstree v
-insertHere t@Masstree{keys,lengths,values} k l v =
+insertHere :: Word64 -> Int -> v -> Masstree v -> Masstree v
+insertHere k l v t@Masstree{keys,lengths,values} =
   go $ fromMaybe (Arr.size keys) (Arr.findIndex (<= k) keys)
   where
   go i
@@ -75,6 +100,9 @@ insertHere t@Masstree{keys,lengths,values} k l v =
     , values = Arr.smallInsertAt values i v
     }
 
+-- split up to eight bytes off
+-- if the input had less than or equal to eight bytes, pad the end with zeros and return it with length (Left case)
+-- if the input had more than eight bytes, return the first eight and the remainder (Right case)
 unconsU64 :: Bytes -> Either (Word64, Int) (Word64, Bytes)
 unconsU64 bs0 =
   let (prefix, len, rest) = go 0 0 bs0

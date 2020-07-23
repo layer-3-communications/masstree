@@ -8,7 +8,6 @@ import Prelude hiding (splitAt)
 import Data.Primitive.Contiguous
 import Data.Primitive (Prim)
 
-import Data.Word (Word64)
 import Control.Monad.ST (runST)
 import Control.Monad.ST.Run (runSmallArrayST,runPrimArrayST)
 
@@ -89,3 +88,15 @@ insertAtThenSplitAt src insIx x splIx
     copy dstR (insIx - splIx + 1) src insIx (size src - insIx)
     right <- unsafeFreeze dstR
     pure (left, right)
+
+-- drop one element from the given index into the array and insert the two noew elements in its place
+replace1To2 :: (Contiguous arr, Element arr a)
+  => arr a -> Int -> a -> a -> arr a
+replace1To2 src i x y = runST $ do
+  -- FIXME I may be able to eliminate a memset for primarrays
+  let len0 = size src
+  dst <- replicateMutable (len0 + 1) x
+  copy dst 0 src 0 i
+  write dst (i + 1) y
+  copy dst (i + 2) src (i + 1) (len0 - i - 1)
+  unsafeFreeze dst

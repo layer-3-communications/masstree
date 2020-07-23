@@ -11,8 +11,11 @@
 module Data.Masstree.BTree
   ( BTree(..)
   , empty
+  , singleton
   , lookup
   , insert
+  , insertWith
+  , upsert
   , upsertF
   , toList
   , fromList
@@ -58,6 +61,9 @@ data BTree v
 empty :: BTree v
 empty = Leaf{keys=mempty,values=mempty}
 
+singleton :: Word64 -> v -> BTree v
+singleton k v = Leaf{keys = Arr.singleton k, values=Arr.singleton v}
+
 -- l <= 8; if l < 8, then pad input bytes with nulls on the left to obtain a Word64
 lookup :: BTree v -> Word64 -> Maybe v
 lookup Leaf{keys,values} !k = case findInsRep keys k of
@@ -66,17 +72,24 @@ lookup Leaf{keys,values} !k = case findInsRep keys k of
 lookup Branch{keys,children} !k = lookup (Arr.index children $ findChild keys k) k
 
 
-insert :: BTree v -> Word64 -> v -> BTree v
-insert t k v = runIdentity $ upsertF (pure . const v) t k
+insert :: Word64 -> v -> BTree v -> BTree v
+insert = insertWith const
+
+-- the funtion has order `f newVal oldVal`
+insertWith :: (v -> v -> v) -> Word64 -> v -> BTree v -> BTree v
+insertWith f k v = upsert (maybe v (flip f v)) k
+
+upsert :: (Maybe v -> v) -> Word64 -> BTree v -> BTree v
+upsert f k = runIdentity . upsertF (pure . f) k
 
 data Result v
   = Split !(BTree v) {-# UNPACK #-} !Word64 !(BTree v)
   | Ok !(BTree v)
 
-upsertF :: forall f v. (Functor f) => (Maybe v -> f v) -> BTree v -> Word64 -> f (BTree v)
+upsertF :: forall f v. (Functor f) => (Maybe v -> f v) -> Word64 -> BTree v -> f (BTree v)
 {-# INLINABLE upsertF #-}
-{-# SPECIALIZE upsertF :: (Maybe v -> ST s v) -> BTree v -> Word64 -> ST s (BTree v) #-}
-upsertF f root !k = go root <&> \case
+{-# SPECIALIZE upsertF :: (Maybe v -> ST s v) -> Word64 -> BTree v -> ST s (BTree v) #-}
+upsertF f !k root = go root <&> \case
   Ok root' -> root'
   Split left keyM right -> Branch
     -- unsafeMinKey is ok because an empty tree will never split a node on insert, and therefore never make it to this branch
@@ -177,7 +190,7 @@ toList = foldrWithKey (\k v xs -> (k,v) : xs) []
 
 -- | Build a BTree from a list of key-value pairs.
 fromList :: [(Word64,v)] -> BTree v
-fromList = Foldable.foldl' (\acc (k,v) -> insert acc k v) empty
+fromList = Foldable.foldl' (\acc (k,v) -> insert k v acc) empty
 
 -- | Low performance @Eq@ instance. Only really needed for tests.
 instance Eq v => Eq (BTree v) where
@@ -190,7 +203,7 @@ instance Eq v => Eq (BTree v) where
 -- in favor of later ones. Rewrite this to use a Semigroup instance on
 -- the values.
 instance Semigroup (BTree v) where
-  a0 <> b = foldrWithKey (\k v acc -> insert acc k v) a0 b
+  a0 <> b = foldrWithKey insert a0 b
 
 instance Monoid (BTree v) where
   mempty = empty

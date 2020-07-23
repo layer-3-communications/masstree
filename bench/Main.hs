@@ -5,7 +5,6 @@ import Data.Word (Word64)
 import System.Random (mkStdGen,uniformR)
 import Data.List (unfoldr)
 
-import qualified Data.List as List
 import qualified Data.Masstree.BTree as BTree
 import qualified Data.Map.Strict as Map
 
