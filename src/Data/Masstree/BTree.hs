@@ -126,8 +126,7 @@ upsertF f !k root = go root <&> \case
           -- TODO for now I'm just inserting first and splitting later
           -- I could avoid some memory copying if I figured out destinations ahead-of-time
           let keys' = Arr.primInsertAt keys i keyM
-              -- TODO replace after insertAt? what hilarious amounts of copying!
-              children' = Arr.replaceAt (Arr.smallInsertAt children i left) (i + 1) right
+              children' = Arr.replace1To2 children i left right
            in if Arr.size children' <= fanout
               then Ok
                 Branch {keys = keys', children = children'}
@@ -146,7 +145,7 @@ upsertF f !k root = go root <&> \case
           , children = Arr.replaceAt children i child'
           }
 
-type EitherIntInt# = (# Int# | Int# #) 
+type EitherIntInt# = (# Int# | Int# #)
 
 pattern LeftInt# :: Int# -> EitherIntInt#
 pattern LeftInt# x = (# x | #)
