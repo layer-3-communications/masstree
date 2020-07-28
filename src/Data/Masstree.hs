@@ -8,13 +8,19 @@ module Data.Masstree
   , singleton
   , lookup
   , insert
+  , insertWith
+  , upsert
+  , upsertF
   , fromList
   ) where
 
 import Prelude hiding (lookup)
 
+import Control.Monad.ST (ST)
 import Data.Bits ((.|.), unsafeShiftL)
 import Data.Bytes (Bytes)
+import Data.Functor ((<&>))
+import Data.Functor.Identity (runIdentity)
 import Data.Masstree.BTree (BTree)
 import Data.Maybe (fromMaybe)
 import Data.Primitive (PrimArray)
@@ -67,14 +73,23 @@ lookup k TrieNode{next} = case unconsU64 k of
   Right (prefix, keyRest) -> lookup keyRest =<< BTree.lookup prefix next
 
 insert :: Bytes -> v -> Masstree v -> Masstree v
-insert k v t@TrieNode{next} = case unconsU64 k of
-  Left (padded, len) ->
-    t{ next = BTree.upsert (insertHere len v . fromMaybe empty) padded next }
-  Right (prefix, keyRest) ->
-    t{ next = BTree.insertWith (const recurse) prefix base next }
+insert = insertWith const
+
+insertWith :: (v -> v -> v) -> Bytes -> v -> Masstree v -> Masstree v
+insertWith f k v = upsert (maybe v (flip f v)) k
+
+upsert :: (Maybe v -> v) -> Bytes -> Masstree v -> Masstree v
+upsert f k = runIdentity . upsertF (pure . f) k
+
+upsertF :: (Functor f) => (Maybe v -> f v) -> Bytes -> Masstree v -> f (Masstree v)
+upsertF f k t@TrieNode{next} = case unconsU64 k of
+  Left (padded, len) -> (\next' -> t{next = next'}) <$>
+    BTree.upsertF (upsertHereF f len . fromMaybe empty) padded next
+  Right (prefix, keyRest) -> (\next' -> t{next = next'}) <$>
+    BTree.upsertF recurse prefix next
     where
-    recurse treeRest = insert keyRest v treeRest
-    base = singleton keyRest v
+    recurse (Just treeRest) = upsertF f keyRest treeRest
+    recurse Nothing = singleton keyRest <$> f Nothing
 
 -- | Build a Masstree from a list of key-value pairs.
 fromList :: [(Bytes,v)] -> Masstree v
@@ -92,20 +107,24 @@ lookupHere l TrieNode{lengths,values} =
 -- since the padded contents of the key appear at the next-higher layer,
 -- we need only the leftover length of the key
 insertHere :: Int -> v -> Masstree v -> Masstree v
-insertHere l v t@TrieNode{lengths,values} = case Arr.findIndex (<= l) lengths of
+insertHere l v = runIdentity . upsertHereF (const (pure v)) l
+
+upsertHereF :: (Functor f) => (Maybe v -> f v) -> Int -> Masstree v -> f (Masstree v)
+{-# INLINABLE upsertHereF #-}
+{-# SPECIALIZE upsertHereF :: (Maybe v -> ST s v) -> Int -> Masstree v -> ST s (Masstree v) #-}
+upsertHereF f l t@TrieNode{lengths,values} = case Arr.findIndex (<= l) lengths of
   Just i
-    | Arr.index lengths i == l -> t
-      { lengths = Arr.replaceAt lengths i l
-      , values = Arr.replaceAt values i v
+    | Arr.index lengths i == l ->
+      f (Just $ Arr.index values i) <&> \v ->
+        t { values = Arr.replaceAt values i v }
+    | otherwise -> f Nothing <&> \v ->
+      t { lengths = Arr.primInsertAt lengths i l
+        , values = Arr.smallInsertAt values i v
+        }
+  Nothing -> f Nothing <&> \v ->
+    t { lengths = Arr.primInsertAt lengths (Arr.size lengths) l
+      , values = Arr.smallInsertAt values (Arr.size values) v
       }
-    | otherwise -> t
-      { lengths = Arr.primInsertAt lengths i l
-      , values = Arr.smallInsertAt values i v
-      }
-  Nothing -> t
-    { lengths = Arr.primInsertAt lengths (Arr.size lengths) l
-    , values = Arr.smallInsertAt values (Arr.size values) v
-    }
 
 -- split up to eight bytes off
 -- if less that eight bytes were found, pad with zeros on the end
