@@ -2,26 +2,31 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# language LambdaCase #-}
-{-# language MultiWayIf #-}
-{-# language NamedFieldPuns #-}
-{-# language OverloadedStrings #-}
-{-# language ScopedTypeVariables #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiWayIf #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
+import Data.Bytes (Bytes)
 import Data.Masstree.BTree (BTree)
 import Data.Maybe (isJust)
+import Data.Primitive.ByteArray (byteArrayFromList)
 import Data.Proxy (Proxy(Proxy))
-import Data.Word (Word64)
+import Data.Word (Word8,Word64)
 import Test.Tasty (defaultMain,testGroup,TestTree)
 import Test.Tasty.QuickCheck ((===))
 
+import qualified Data.Bytes as Bytes
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
+import qualified Data.Masstree as Masstree
+import qualified Data.Masstree.BTree as BTree
 import qualified Data.Primitive as PM
 import qualified Data.Primitive.Contiguous as Arr
-import qualified Data.Masstree.BTree as BTree
 import qualified Test.QuickCheck.Classes.Base as QCC
 import qualified Test.Tasty.QuickCheck as TQC
 
@@ -51,7 +56,13 @@ tests = testGroup "Tests"
     , TQC.testProperty "lookup" $ \(Keys xs) ->
         let ys = map (\x -> (x,x)) xs
             bt = BTree.fromList ys
-         in all (\x -> BTree.lookup bt x == Just x) xs
+         in all (\x -> BTree.lookup x bt == Just x) xs
+    ]
+  , testGroup "Masstree"
+    [ TQC.testProperty "lookup" $ \ks ->
+      let kvs = (\k -> (k,k)) <$> ks
+          mt = Masstree.fromList kvs
+       in all (\k -> Masstree.lookup k mt == Just k) ks
     ]
   ]
 
@@ -187,3 +198,6 @@ newtype Keys = Keys { unKeys :: [Word64] }
 instance TQC.Arbitrary Keys where
   arbitrary = Keys <$> TQC.vectorOf 100 (TQC.choose (0,200))
   shrink = map Keys . TQC.shrinkList (\_ -> []) . unKeys
+
+instance TQC.Arbitrary Bytes where
+  arbitrary = Bytes.fromByteArray . byteArrayFromList <$> TQC.arbitrary @[Word8]

@@ -2,7 +2,14 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
-module Data.Masstree where
+module Data.Masstree
+  ( Masstree
+  , empty
+  , singleton
+  , lookup
+  , insert
+  , fromList
+  ) where
 
 import Prelude hiding (lookup)
 
@@ -15,6 +22,7 @@ import Data.Primitive.SmallArray (SmallArray)
 import Data.Word (Word8,Word64)
 
 import qualified Data.Bytes as Bytes
+import qualified Data.Foldable as Foldable
 import qualified Data.Masstree.BTree as BTree
 import qualified Data.Masstree.Utils as Arr
 import qualified Data.Primitive.Contiguous as Arr
@@ -55,8 +63,8 @@ singleton k v = case unconsU64 k of
 
 lookup :: Bytes -> Masstree v -> Maybe v
 lookup k TrieNode{next} = case unconsU64 k of
-  Left (padded, len) -> lookupHere len =<< BTree.lookup next padded
-  Right (prefix, keyRest) -> lookup keyRest =<< BTree.lookup next prefix
+  Left (padded, len) -> lookupHere len =<< BTree.lookup padded next
+  Right (prefix, keyRest) -> lookup keyRest =<< BTree.lookup prefix next
 
 insert :: Bytes -> v -> Masstree v -> Masstree v
 insert k v t@TrieNode{next} = case unconsU64 k of
@@ -68,6 +76,9 @@ insert k v t@TrieNode{next} = case unconsU64 k of
     recurse treeRest = insert keyRest v treeRest
     base = singleton keyRest v
 
+-- | Build a Masstree from a list of key-value pairs.
+fromList :: [(Bytes,v)] -> Masstree v
+fromList = Foldable.foldl' (\acc (k,v) -> insert k v acc) empty
 
 ------------------ Helpers ------------
 

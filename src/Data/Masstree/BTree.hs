@@ -8,6 +8,15 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE UnboxedSums #-}
 
+-- | This module defines a B+-tree, which is a balanced /n/-ary search tree for
+-- a fixed /n/ with values stored at the leaves. It is specialized to keys of
+-- type 'Word64', and thereby could play a role similar to "Data.IntMap".
+-- However, it is meant specifically for the implementation of masstrees in
+-- "Data.Masstree".
+--
+-- TODO: deletions based on <http://sidsen.azurewebsites.net/papers/relaxed-b-tree-tods.pdf>
+--
+-- TODO: prefix compression
 module Data.Masstree.BTree
   ( BTree(..)
   , empty
@@ -39,46 +48,70 @@ import qualified Data.Foldable as Foldable
 fanout :: Int
 fanout = 8
 
--- | A BTree.
+-- | A B+ tree with a fanout of 8 for use in memory.
 --
 -- The data constructors are only exported for testing. Do not use these.
 data BTree v
   = Branch
     { keys :: !(PrimArray Word64)
-      -- ^ keys delimiting the min/max entries in the children
-      -- INVARIANT: length equal to children length - 1
-      -- there are some "fun" design choices here: should I add two more for min/max bound of tree as a whole to speed up misses?
+      -- ^ Keys delimiting the min/max entries in the children.
+      -- The @i@th key is the greatest lower bound on the @i+1@st child's keyset.
+      --
+      -- INVARIANT: @length keys == length children - 1@
+      --
+      -- TODO there are some "fun" design choices here: should I add two more for min/max bound of tree as a whole to speed up misses?
     , children :: !(SmallArray (BTree v))
-      -- INVARIANT: length less than or equal to fanout
-      -- INVARIANT length at least one, but also at least half the fanout if not the root node
+      -- ^ INVARIANT: @1 <= length children <= fanout@
     }
   | Leaf
     { keys :: !(PrimArray Word64)
+      -- ^ Individual keys for each value stored at this node.
     , values :: !(SmallArray v)
-    -- INVARIANT: keys and values are the same length and non-empty
+      -- ^ The @i@th value here corresponds to the key stored at index @i@ in @keys@.
+      --
+      -- INVARIANT: @keys@ and @values@ are the same length and non-empty
     }
 
+-- | /O(1)/.
+-- The empty map.
 empty :: BTree v
 empty = Leaf{keys=mempty,values=mempty}
 
+-- | /O(1)/.
+-- A map with a single element.
 singleton :: Word64 -> v -> BTree v
 singleton k v = Leaf{keys = Arr.singleton k, values=Arr.singleton v}
 
--- l <= 8; if l < 8, then pad input bytes with nulls on the left to obtain a Word64
-lookup :: BTree v -> Word64 -> Maybe v
-lookup Leaf{keys,values} !k = case findInsRep keys k of
+-- FIXME move this documentation: l <= 8; if l < 8, then pad input bytes with nulls on the left to obtain a Word64
+-- | /O(log n)/.
+-- Lookup the value at a key in the map.
+--
+-- The function will return the corresponding value as (Just value), or Nothing if the key isn't in the map.
+lookup :: Word64 -> BTree v -> Maybe v
+lookup !k Leaf{keys,values} = case findInsRep keys k of
   RightInt# i -> Just $ Arr.index values (I# i)
   _ -> Nothing
-lookup Branch{keys,children} !k = lookup (Arr.index children $ findChild keys k) k
+lookup !k Branch{keys,children} = lookup k (Arr.index children $ findChild keys k)
 
-
+-- | /O(log n)/.
+-- Insert a new key and value in the map. If the key is already present in the
+-- map, the associated value is replaced with the supplied value. 'insert' is
+-- equivalent to @'insertWith' 'const'@.
 insert :: Word64 -> v -> BTree v -> BTree v
 insert = insertWith const
 
--- the funtion has order `f newVal oldVal`
+-- | /O(log n)/.
+-- Insert with a function, combining new value and old value.
+-- @'insertWith' f key value mp@ will insert the pair @(key, value)@ into @mp@
+-- if @key@ does not exist in the map.
+-- If the key does exist, the function will insert the pair]
+-- @(key, f new_value old_value)@.
 insertWith :: (v -> v -> v) -> Word64 -> v -> BTree v -> BTree v
 insertWith f k v = upsert (maybe v (flip f v)) k
 
+-- | /O(log n)/.
+-- 'upsert' may be used to update or insert a value in a 'BTree'.
+-- In short: @'lookup' k ('upsert' f k t0) === f ('lookup' k t0)@.
 upsert :: (Maybe v -> v) -> Word64 -> BTree v -> BTree v
 upsert f k = runIdentity . upsertF (pure . f) k
 
@@ -86,6 +119,10 @@ data Result v
   = Split !(BTree v) {-# UNPACK #-} !Word64 !(BTree v)
   | Ok !(BTree v)
 
+-- | /O(log n)/.
+-- Like 'upsert' 'upsertF' can insert or update a value in a 'BTree', but the
+-- updating function operates in a functorial context.
+-- In short: @'lookup' k '<$>' 'upsertF' f k t0 === f ('lookup' k t0)@.
 upsertF :: forall f v. (Functor f) => (Maybe v -> f v) -> Word64 -> BTree v -> f (BTree v)
 {-# INLINABLE upsertF #-}
 {-# SPECIALIZE upsertF :: (Maybe v -> ST s v) -> Word64 -> BTree v -> ST s (BTree v) #-}
@@ -188,6 +225,9 @@ toList :: BTree v -> [(Word64,v)]
 toList = foldrWithKey (\k v xs -> (k,v) : xs) []
 
 -- | Build a BTree from a list of key-value pairs.
+--
+-- WARNING: this creates the worst-possible BTree structure when fed a sorted]
+-- list.
 fromList :: [(Word64,v)] -> BTree v
 fromList = Foldable.foldl' (\acc (k,v) -> insert k v acc) empty
 
