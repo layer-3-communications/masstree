@@ -21,6 +21,7 @@ module Data.Masstree.BTree
   ( BTree(..)
   , empty
   , singleton
+  , null
   , lookup
   , insert
   , insertWith
@@ -28,9 +29,11 @@ module Data.Masstree.BTree
   , upsertF
   , toList
   , fromList
+  , foldrWithKey
+  , foldlWithKeyM'
   ) where
 
-import Prelude hiding (lookup)
+import Prelude hiding (lookup,null)
 
 import Data.Functor ((<&>))
 import Data.Functor.Identity (runIdentity)
@@ -40,6 +43,7 @@ import Data.Word (Word64)
 import Control.Monad.ST (ST)
 import GHC.Exts (Int(I#),Int#)
 
+import qualified Data.Primitive as PM
 import qualified Data.Primitive.Contiguous as Arr
 import qualified Data.Masstree.Utils as Arr
 import qualified GHC.Exts as Exts
@@ -71,6 +75,11 @@ data BTree v
       --
       -- INVARIANT: @keys@ and @values@ are the same length and non-empty
     }
+
+-- | /O(1)/ Is the map empty?
+null :: BTree v -> Bool
+null Branch{} = False
+null Leaf{values} = PM.sizeofSmallArray values == 0
 
 -- | /O(1)/.
 -- The empty map.
@@ -219,6 +228,16 @@ foldrWithKey f b0 tree0 = go tree0 b0
   go tree b = case tree of
     Leaf{keys,values} -> Arr.foldrZipWith f b keys values
     Branch{children} -> Arr.foldr go b children
+
+-- | Strict monadic left fold over all key-value pairs in a BTree.
+foldlWithKeyM' :: forall m v b. Monad m => (b -> Word64 -> v -> m b) -> b -> BTree v -> m b
+{-# inline foldlWithKeyM' #-}
+foldlWithKeyM' f b0 tree0 = go b0 tree0
+  where
+  go :: b -> BTree v -> m b
+  go b tree = case tree of
+    Leaf{keys,values} -> Arr.foldlZipWithM' f b keys values
+    Branch{children} -> Arr.foldlM' go b children
 
 -- | Convert a BTree to a list of key-value pairs.
 toList :: BTree v -> [(Word64,v)]

@@ -17,27 +17,6 @@ checkedIndex xs i
   | i < size xs = Just $ index xs i
   | otherwise = Nothing
 
-findIndex :: (Contiguous arr, Element arr a) => (a -> Bool) -> arr a -> Maybe Int
-{-# inline findIndex #-}
-findIndex p xs = loop 0
-  where
-  loop i
-    | i < size xs = if p (index xs i) then Just i else loop (i + 1)
-    | otherwise = Nothing
-
--- create a copy of the given array except the given index is replaced with the given value
-replaceAt :: (Contiguous arr, Element arr a) => arr a -> Int -> a -> arr a
-{-# inline replaceAt #-}
-replaceAt src i x = create $ do
-  dst <- thaw src 0 (size src)
-  write dst i x
-  pure dst
-
-modifyAtF :: (Contiguous arr, Element arr a, Functor f)
-  => (a -> f a) -> arr a -> Int -> f (arr a)
-{-# inline modifyAtF #-}
-modifyAtF f src i = replaceAt src i <$> f (index src i)
-
 -- insert element so that it becomes the new element at the given index
 -- the preceding elements remain unchanged, and the successding element
 -- indexes are shifted over
