@@ -31,6 +31,8 @@ module Data.Masstree.BTree
   , fromList
   , foldrWithKey
   , foldlWithKeyM'
+    -- * Unstable
+  , height
   ) where
 
 import Prelude hiding (lookup,null)
@@ -274,3 +276,24 @@ instance Exts.IsList (BTree v) where
 -- | Shows a list of key-value pairs present in the BTree.
 instance Show v => Show (BTree v) where
   showsPrec d b = showsPrec d (toList b)
+
+-- | The height of the BTree. Since the BTrees in this library are
+-- of degree 8, the height provides a coarse approximation of the
+-- number of elements in the BTree:
+--
+-- * Height 0: 0-8 elements
+-- * Height 1: 9-64 elements
+-- * Height 2: 65-512 elements
+-- * Height 3: 513-4096 elements
+-- * Height 4: 4097-32768 elements
+-- * Height 5: 32769-262144 elements
+--
+-- WARNING: This function is not stable. Currently, the fanout is set
+-- to 8, but if this ever were to change, then the height of some trees
+-- would change. Nevertheless, this is a useful tool for approximating
+-- cardinality without having to walk the entire data structure.
+height :: BTree v -> Int
+height = go 0 where
+  go :: Int -> BTree v -> Int
+  go !h Leaf{} = h
+  go !h Branch{children} = go (h + 1) (PM.indexSmallArray children 0)
