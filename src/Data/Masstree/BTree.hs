@@ -31,18 +31,22 @@ module Data.Masstree.BTree
   , fromList
   , foldrWithKey
   , foldlWithKeyM'
+  , size
+  , toArrays
+  , fromSortedArrays
     -- * Unstable
   , height
   ) where
 
 import Prelude hiding (lookup,null)
 
+import Control.Monad.ST.Run (runSmallArrayST,runPrimArrayST)
 import Data.Functor ((<&>))
 import Data.Functor.Identity (runIdentity)
 import Data.Primitive (PrimArray)
-import Data.Primitive.SmallArray (SmallArray)
+import Data.Primitive.SmallArray (SmallArray,SmallMutableArray)
 import Data.Word (Word64)
-import Control.Monad.ST (ST)
+import Control.Monad.ST (ST,runST)
 import GHC.Exts (Int(I#),Int#)
 
 import qualified Data.Primitive as PM
@@ -252,6 +256,161 @@ toList = foldrWithKey (\k v xs -> (k,v) : xs) []
 fromList :: [(Word64,v)] -> BTree v
 fromList = Foldable.foldl' (\acc (k,v) -> insert k v acc) empty
 
+-- | Convert a BTree to an array of all of the keys and an array
+-- of all of the values. The array of keys is in ascending order.
+--
+-- Postcondition: the lengths of the returned arrays are the same as
+-- one another.
+toArrays :: forall v. BTree v -> (PrimArray Word64, SmallArray v)
+{-# noinline toArrays #-}
+toArrays b0 = runST action where
+  action :: forall s. ST s (PrimArray Word64, SmallArray v)
+  action = do
+    let sz = size b0
+    keysDst <- PM.newPrimArray sz
+    valsDst <- PM.newSmallArray sz errorThunk
+    let go :: Int -> BTree v -> ST s Int
+        go !ixDst x = case x of
+          Branch{children} -> Foldable.foldlM go ixDst children
+          Leaf{keys,values} -> do
+            let n = PM.sizeofSmallArray values
+            PM.copySmallArray valsDst ixDst values 0 n
+            PM.copyPrimArray keysDst ixDst keys 0 n
+            pure (ixDst + n)
+    !_ <- go 0 b0
+    keys' <- PM.unsafeFreezePrimArray keysDst
+    vals' <- PM.unsafeFreezeSmallArray valsDst
+    pure (keys',vals')
+
+
+-- | Create a BTree from an array of keys and an array of values.
+--
+-- Precondition: array of keys is sorted in ascending order
+-- Precondition: array of keys and array of values are same length
+fromSortedArrays :: forall v. PrimArray Word64 -> SmallArray v -> BTree v
+{-# noinline fromSortedArrays #-}
+fromSortedArrays !ks0 !vs0
+  | PM.sizeofPrimArray ks0 /= len =
+      errorWithoutStackTrace "Data.Masstree.BTree.fromSortedArrays: length mismatch"
+  | len == 0 = empty
+  | isAscending (PM.indexPrimArray ks0 0) 1 =
+      let dividedLen = div len fanout
+       in case dividedLen of
+            0 -> Leaf
+              { keys = PM.clonePrimArray ks0 0 len
+              , values = PM.cloneSmallArray vs0 0 len
+              }
+            _ ->
+              let truncLen = fanout * dividedLen
+                  nodesSize = 1 + dividedLen
+                  leaves = runSmallArrayST $ do
+                    -- nodesSize must be at least two
+                    dst <- PM.newSmallArray nodesSize errorThunk
+                    let finalTwoLen = 8 + len - truncLen
+                    let ultimateLen = div finalTwoLen 2
+                    let ultimateIx = len - ultimateLen
+                    let penultimateLen = finalTwoLen - ultimateLen
+                    let penultimateIx = len - finalTwoLen
+                    -- starts by cleaning up the ragged part at the end
+                    PM.writeSmallArray dst (nodesSize - 1) $! Leaf
+                      { keys = PM.clonePrimArray ks0 ultimateIx ultimateLen
+                      , values = PM.cloneSmallArray vs0 ultimateIx ultimateLen
+                      }
+                    PM.writeSmallArray dst (nodesSize - 2) $! Leaf
+                      { keys = PM.clonePrimArray ks0 penultimateIx penultimateLen
+                      , values = PM.cloneSmallArray vs0 penultimateIx penultimateLen
+                      }
+                    buildFullLeaves 0 0 (nodesSize - 2) dst
+               in chunkNodes nodesSize leaves
+  | otherwise =
+      errorWithoutStackTrace "Data.Masstree.BTree.fromSortedArrays: nonascending keys"
+  where
+  !len = PM.sizeofSmallArray vs0
+  isAscending !prev !ix = if ix < len
+    then
+      let next = PM.indexPrimArray ks0 ix 
+       in if prev < next
+            then isAscending next (ix + 1)
+            else False
+    else True
+  -- Note: buildFullLeaves only creates full leaves. The final two
+  -- underfull leaves are expected to already be filled in before this
+  -- function is called.
+  buildFullLeaves :: forall s. Int -> Int -> Int -> SmallMutableArray s (BTree v) -> ST s (SmallArray (BTree v))
+  buildFullLeaves !ix !dstIx !remainingNodes !dst = case remainingNodes of
+    0 -> PM.unsafeFreezeSmallArray dst
+    _ -> do
+      let keys = PM.clonePrimArray ks0 ix fanout
+      let values = PM.cloneSmallArray vs0 ix fanout
+      let !node = Leaf{keys,values}
+      PM.writeSmallArray dst dstIx node
+      buildFullLeaves (ix + fanout) (dstIx + 1) (remainingNodes - 1) dst
+
+-- Internal function.
+-- Precondition: argument array has size >= 2
+-- Precondition: all nodes in argument array are non-empty
+-- Precondition: len argument agrees with size of small array argument
+chunkNodes :: forall v. Int -> SmallArray (BTree v) -> BTree v
+chunkNodes !len !nodes =
+  let dividedLen = div len fanout
+   in case dividedLen of
+        0 -> Branch
+          { keys = sliceNodeMinimumKeys len nodes
+          , children = PM.cloneSmallArray nodes 0 len
+          }
+        _ ->
+          let truncLen = fanout * dividedLen
+              nodesSize = 1 + dividedLen
+              leaves = runSmallArrayST $ do
+                -- nodesSize must be at least two
+                dst <- PM.newSmallArray nodesSize errorThunk
+                let finalTwoLen = 8 + len - truncLen
+                let ultimateLen = div finalTwoLen 2
+                let ultimateIx = len - ultimateLen
+                let penultimateLen = finalTwoLen - ultimateLen
+                let penultimateIx = len - finalTwoLen
+                -- starts by cleaning up the ragged part at the end
+                let ultimateValues = PM.cloneSmallArray nodes ultimateIx ultimateLen
+                PM.writeSmallArray dst (nodesSize - 1) $! Branch
+                  { keys = sliceNodeMinimumKeys ultimateLen ultimateValues
+                  , children = ultimateValues
+                  }
+                let penultimateValues = PM.cloneSmallArray nodes penultimateIx penultimateLen
+                PM.writeSmallArray dst (nodesSize - 2) $! Branch
+                  { keys = sliceNodeMinimumKeys penultimateLen penultimateValues
+                  , children = penultimateValues
+                  }
+                buildFullNodes 0 0 (nodesSize - 2) dst
+           in chunkNodes nodesSize leaves
+  where
+  buildFullNodes :: forall s. Int -> Int -> Int -> SmallMutableArray s (BTree v) -> ST s (SmallArray (BTree v))
+  buildFullNodes !ix !dstIx !remainingNodes !dst = case remainingNodes of
+    0 -> PM.unsafeFreezeSmallArray dst
+    _ -> do
+      let children = PM.cloneSmallArray nodes ix fanout
+      let !node = Branch{keys=sliceNodeMinimumKeys fanout children,children}
+      PM.writeSmallArray dst dstIx node
+      buildFullNodes (ix + fanout) (dstIx + 1) (remainingNodes - 1) dst
+
+-- Precondition: argument size >= 1
+-- Postcondition: size of result array is 1 less than size of argument array
+sliceNodeMinimumKeys :: Int -> SmallArray (BTree v) -> PrimArray Word64
+sliceNodeMinimumKeys !len !nodes = runPrimArrayST $ do
+  dst <- PM.newPrimArray (len - 1)
+  let go !ix !ixDst = case ixDst of
+        (-1) -> PM.unsafeFreezePrimArray dst
+        _ -> do
+          k <- PM.indexSmallArrayM nodes ix >>= \case
+            Leaf{keys} -> pure (PM.indexPrimArray keys 0)
+            Branch{keys} -> pure (PM.indexPrimArray keys 0)
+          PM.writePrimArray dst ixDst k
+          go (ix - 1) (ixDst - 1)
+  go (len - 1) (len - 2)
+
+errorThunk :: a
+{-# noinline errorThunk #-}
+errorThunk = errorWithoutStackTrace "Data.Masstree.BTree: implementation mistake"
+
 -- | Low performance @Eq@ instance. Only really needed for tests.
 instance Eq v => Eq (BTree v) where
   a == b = toList a == toList b
@@ -297,3 +456,11 @@ height = go 0 where
   go :: Int -> BTree v -> Int
   go !h Leaf{} = h
   go !h Branch{children} = go (h + 1) (PM.indexSmallArray children 0)
+
+-- | /O(n)/ The number of entries in the BTree. This operation requires
+-- walking this entire BTree.
+size :: BTree v -> Int
+size = go where
+  go :: BTree v -> Int
+  go Leaf{values} = PM.sizeofSmallArray values
+  go Branch{children} = Foldable.foldl' (\acc b -> acc + go b) 0 children

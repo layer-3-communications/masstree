@@ -12,8 +12,10 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 import Data.Bytes (Bytes)
+import Data.Functor.Classes (liftShowsPrec)
 import Data.Masstree.BTree (BTree)
 import Data.Maybe (isJust)
+import Data.Primitive (PrimArray,SmallArray)
 import Data.Primitive.ByteArray (byteArrayFromList)
 import Data.Proxy (Proxy(Proxy))
 import Data.Word (Word8,Word64)
@@ -27,6 +29,7 @@ import qualified Data.Masstree as Masstree
 import qualified Data.Masstree.BTree as BTree
 import qualified Data.Primitive as PM
 import qualified Data.Primitive.Contiguous as Arr
+import qualified GHC.Exts as Exts
 import qualified Test.QuickCheck.Classes.Base as QCC
 import qualified Test.Tasty.QuickCheck as TQC
 
@@ -53,10 +56,37 @@ tests = testGroup "Tests"
         Map.toList (Map.fromList ys)
         ===
         BTree.toList (BTree.fromList ys)
+    , TQC.testProperty "toArrays" $ \(Keys xs) ->
+        let ys = map (\x -> (x,x)) xs
+            zs = Map.toList (Map.fromList ys)
+         in
+        (Exts.fromList (map fst zs), Exts.fromList (map snd zs))
+        ===
+        BTree.toArrays (BTree.fromList ys)
     , TQC.testProperty "lookup" $ \(Keys xs) ->
         let ys = map (\x -> (x,x)) xs
             bt = BTree.fromList ys
          in all (\x -> BTree.lookup x bt == Just x) xs
+    , TQC.testProperty "fromSortedArrays" $ \(Keys xs) ->
+        let ys = map (\x -> (x,x)) xs
+            xsSorted = List.nub (List.sort xs)
+            xsSortedKeys :: PrimArray Word64 = Exts.fromList xsSorted
+            xsSortedValues :: SmallArray Word64 = Exts.fromList xsSorted
+            bt1 = BTree.fromList ys
+            bt2 = BTree.fromSortedArrays xsSortedKeys xsSortedValues
+         in if | checkOrderInvariant bt2 == False ->
+                   TQC.counterexample (showBTreeInternal bt2) (TQC.property False)
+               | checkHeightInvariant bt2 == False ->
+                   TQC.counterexample (showBTreeInternal bt2) (TQC.property False)
+               | checkBalanceInvariant bt2 == False ->
+                   TQC.counterexample (showBTreeInternal bt2) (TQC.property False)
+               | otherwise -> bt1 === bt2
+    , TQC.testProperty "toArrays-fromSortedArrays" $ \(Keys xs) ->
+        let ys = map (\x -> (x,x)) xs
+            zs = BTree.fromList ys
+         in zs
+            ===
+            uncurry BTree.fromSortedArrays (BTree.toArrays zs)
     ]
   , testGroup "Masstree"
     [ TQC.testProperty "lookup" $ \ks ->
@@ -109,6 +139,16 @@ instance TQC.Arbitrary v => TQC.Arbitrary (BTree v) where
                      }
                  ]
 
+showBTreeInternal :: Show v => BTree v -> String
+showBTreeInternal b0 = case b0 of
+  BTree.Leaf{keys,values} -> "Leaf " ++ show keys ++ " " ++ show values
+  BTree.Branch{keys,children} ->
+    "Branch " ++ show keys ++ " " ++
+    liftShowsPrec
+      (\_ x s -> showBTreeInternal x ++ s)
+      (\ts s -> "[" ++ foldMap (\t -> showBTreeInternal t ++ ",") ts ++ "]" ++ s)
+      5 children ""
+
 checkHeightInvariant :: BTree v -> Bool
 checkHeightInvariant = isJust . go
   where
@@ -125,6 +165,27 @@ checkHeightInvariant = isJust . go
         if (Arr.all (\h -> h == h0) hs)
           then Just h0
           else Nothing
+
+checkBalanceInvariant :: BTree v -> Bool
+checkBalanceInvariant b0 = go 0 b0 where
+  go :: Int -> BTree v -> Bool
+  go !h = \case
+    BTree.Leaf{keys,values} ->
+      PM.sizeofSmallArray values == PM.sizeofPrimArray keys
+      &&
+      PM.sizeofSmallArray values >= 4
+    BTree.Branch{keys,children} ->
+      (if h > 0 && PM.sizeofPrimArray keys /= 0
+        then PM.sizeofSmallArray children == PM.sizeofPrimArray keys + 1
+        else True
+      )
+      &&
+      (if h > 0
+        then PM.sizeofSmallArray children >= 4
+        else True
+      )
+      &&
+      all (go (h + 1)) children
 
 checkOrderInvariant :: BTree v -> Bool
 checkOrderInvariant = go where
@@ -196,7 +257,7 @@ newtype Keys = Keys { unKeys :: [Word64] }
   deriving newtype (Show)
 
 instance TQC.Arbitrary Keys where
-  arbitrary = Keys <$> TQC.vectorOf 100 (TQC.choose (0,200))
+  arbitrary = Keys <$> TQC.vectorOf 600 (TQC.choose (0,1000))
   shrink = map Keys . TQC.shrinkList (\_ -> []) . unKeys
 
 instance TQC.Arbitrary Bytes where
