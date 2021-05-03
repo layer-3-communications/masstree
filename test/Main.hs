@@ -173,12 +173,12 @@ checkBalanceInvariant b0 = go 0 b0 where
     BTree.Leaf{keys,values} ->
       PM.sizeofSmallArray values == PM.sizeofPrimArray keys
       &&
-      PM.sizeofSmallArray values >= 4
-    BTree.Branch{keys,children} ->
-      (if h > 0 && PM.sizeofPrimArray keys /= 0
-        then PM.sizeofSmallArray children == PM.sizeofPrimArray keys + 1
+      (if h > 0
+        then PM.sizeofSmallArray values >= 4
         else True
       )
+    BTree.Branch{keys,children} ->
+      PM.sizeofSmallArray children == PM.sizeofPrimArray keys + 1
       &&
       (if h > 0
         then PM.sizeofSmallArray children >= 4
@@ -257,7 +257,9 @@ newtype Keys = Keys { unKeys :: [Word64] }
   deriving newtype (Show)
 
 instance TQC.Arbitrary Keys where
-  arbitrary = Keys <$> TQC.vectorOf 600 (TQC.choose (0,1000))
+  arbitrary = do
+    sz <- TQC.chooseInt (0,600)
+    Keys <$> TQC.vectorOf sz (TQC.choose (0,1000))
   shrink = map Keys . TQC.shrinkList (\_ -> []) . unKeys
 
 instance TQC.Arbitrary Bytes where
