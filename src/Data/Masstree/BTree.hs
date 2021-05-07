@@ -1,5 +1,7 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -81,6 +83,7 @@ data BTree v
       --
       -- INVARIANT: @keys@ and @values@ are the same length and non-empty
     }
+  deriving stock (Functor)
 
 -- | /O(1)/ Is the map empty?
 null :: BTree v -> Bool
