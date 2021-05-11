@@ -52,7 +52,7 @@ splitAt src lenL =
 -- performs less copying than using `insertAt` and `splitAt` separately
 insertAtThenSplitAt :: (Contiguous arr, Element arr a)
   => arr a -> Int -> a -> Int -> (arr a, arr a)
-insertAtThenSplitAt src insIx x splIx
+insertAtThenSplitAt src !insIx x !splIx
   | insIx < splIx = runST $ do -- inserted element ends up in dstL
       dstL <- replicateMutable splIx x
       copy dstL 0 src 0 insIx
@@ -71,7 +71,8 @@ insertAtThenSplitAt src insIx x splIx
 -- drop one element from the given index into the array and insert the two noew elements in its place
 replace1To2 :: (Contiguous arr, Element arr a)
   => arr a -> Int -> a -> a -> arr a
-replace1To2 src i x y = runST $ do
+{-# inline replace1To2 #-}
+replace1To2 !src !i x y = runST $ do
   -- FIXME I may be able to eliminate a memset for primarrays
   let len0 = size src
   dst <- replicateMutable (len0 + 1) x

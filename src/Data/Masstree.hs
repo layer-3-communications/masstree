@@ -81,7 +81,10 @@ insertWith f k v = upsert (maybe v (flip f v)) k
 upsert :: (Maybe v -> v) -> Bytes -> Masstree v -> Masstree v
 upsert f k = runIdentity . upsertF (pure . f) k
 
-upsertF :: (Functor f) => (Maybe v -> f v) -> Bytes -> Masstree v -> f (Masstree v)
+-- Note: In theory, this should only require a 'Functor' constraint, not 'Monad'.
+-- Unfortunately, it is difficult to get good guarantees about thunk leaks without
+-- using 'Monad'.
+upsertF :: (Monad f) => (Maybe v -> f v) -> Bytes -> Masstree v -> f (Masstree v)
 upsertF f k t@TrieNode{next} = case unconsU64 k of
   Left (padded, len) -> (\next' -> t{next = next'}) <$>
     BTree.upsertF (upsertHereF f len . fromMaybe empty) padded next

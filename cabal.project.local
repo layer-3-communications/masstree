@@ -1,0 +1,2 @@
+package masstree
+  ghc-options: -ddump-simpl -dsuppress-all -ddump-to-file

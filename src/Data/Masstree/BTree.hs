@@ -140,8 +140,13 @@ data Result v
 -- | /O(log n)/.
 -- Like 'upsert' 'upsertF' can insert or update a value in a 'BTree', but the
 -- updating function operates in a functorial context.
+--
 -- In short: @'lookup' k '<$>' 'upsertF' f k t0 === f ('lookup' k t0)@.
-upsertF :: forall f v. (Functor f) => (Maybe v -> f v) -> Word64 -> BTree v -> f (BTree v)
+--
+-- Note: In theory, this should only require a 'Functor' constraint, not 'Monad'.
+-- Unfortunately, it is difficult to get good guarantees about thunk leaks without
+-- using 'Monad'.
+upsertF :: forall f v. (Monad f) => (Maybe v -> f v) -> Word64 -> BTree v -> f (BTree v)
 {-# INLINABLE upsertF #-}
 {-# SPECIALIZE upsertF :: (Maybe v -> ST s v) -> Word64 -> BTree v -> ST s (BTree v) #-}
 upsertF f !k root = go root <&> \case
@@ -155,14 +160,14 @@ upsertF f !k root = go root <&> \case
   go :: BTree v -> f (Result v)
   go Leaf{keys,values} = case findInsRep keys k of
     -- replace
-    RightInt# i -> Arr.modifyAtF (f . Just) values (I# i) <&> \values' ->
+    RightInt# i -> Arr.modifyAtF' (f . Just) values (I# i) <&> \values' ->
       Ok Leaf {keys, values = values' }
     -- insert
     -- TODO? for now I'm just inserting first and splitting later
     -- theoretically, insertAtThenSplitAt should be faster, but it seems it isn't...?
     LeftInt# i -> f Nothing <&> \v ->
-      let keys' = Arr.primInsertAt keys (I# i) k
-          values' = Arr.smallInsertAt values (I# i) v
+      let !keys' = Arr.primInsertAt keys (I# i) k
+          !values' = Arr.smallInsertAt values (I# i) v
        in if Arr.size values' <= fanout
           then Ok
             Leaf {keys = keys', values = values'}
@@ -180,8 +185,8 @@ upsertF f !k root = go root <&> \case
         Split left keyM right ->
           -- TODO for now I'm just inserting first and splitting later
           -- I could avoid some memory copying if I figured out destinations ahead-of-time
-          let keys' = Arr.primInsertAt keys i keyM
-              children' = Arr.replace1To2 children i left right
+          let !keys' = Arr.primInsertAt keys i keyM
+              !children' = Arr.replace1To2 children i left right
            in if Arr.size children' <= fanout
               then Ok
                 Branch {keys = keys', children = children'}
@@ -222,7 +227,7 @@ findInsRep !keys !k = case Arr.findIndex (k <=) keys of
 
 -- find the index of a child to recurse into given a key to search for
 findChild :: PrimArray Word64 -> Word64 -> Int
-findChild keys k = go 0
+findChild !keys !k = go 0
   where
   go i
     | i >= Arr.size keys = Arr.size keys
