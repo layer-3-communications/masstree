@@ -23,9 +23,9 @@ checkedIndex xs i
 smallInsertAt :: SmallArray a -> Int -> a -> SmallArray a
 smallInsertAt !src !i !x = runSmallArrayST $ do
   let len0 = size src
-  dst <- replicateMutable (len0 + 1) x
-  copy dst 0 src 0 i
-  copy dst (i + 1) src i (len0 - i)
+  dst <- replicateMut (len0 + 1) x
+  copy dst 0 (slice src 0 i)
+  copy dst (i + 1) (slice src i (len0 - i))
   unsafeFreeze dst
 
 -- Copy of smallInsertAt. PrimArray can skip the memset the SmallArray
@@ -36,8 +36,8 @@ primInsertAt !src !i !x = runPrimArrayST $ do
   let len0 = size src
   dst <- new (len0 + 1)
   write dst i x
-  copy dst 0 src 0 i
-  copy dst (i + 1) src i (len0 - i)
+  copy dst 0 (slice src 0 i)
+  copy dst (i + 1) (slice src i (len0 - i))
   unsafeFreeze dst
 
 -- split the given array at the given index (so that the length of the first
@@ -46,7 +46,7 @@ splitAt :: (Contiguous arr, Element arr a) => arr a -> Int -> (arr a, arr a)
 {-# inline splitAt #-}
 splitAt src lenL =
   let lenR = size src - lenL
-   in (clone src 0 lenL, clone src lenL lenR)
+   in (clone (slice src 0 lenL), clone (slice src lenL lenR))
 
 -- insert an element into an array, then split it
 -- performs less copying than using `insertAt` and `splitAt` separately
@@ -54,17 +54,17 @@ insertAtThenSplitAt :: (Contiguous arr, Element arr a)
   => arr a -> Int -> a -> Int -> (arr a, arr a)
 insertAtThenSplitAt src !insIx x !splIx
   | insIx < splIx = runST $ do -- inserted element ends up in dstL
-      dstL <- replicateMutable splIx x
-      copy dstL 0 src 0 insIx
-      copy dstL (insIx + 1) src insIx (splIx - insIx - 1)
+      dstL <- replicateMut splIx x
+      copy dstL 0 (slice src 0 insIx)
+      copy dstL (insIx + 1) (slice src insIx (splIx - insIx - 1))
       left <- unsafeFreeze dstL
-      let right = clone src (splIx - 1) (size src - splIx + 1)
+      let right = clone (slice src (splIx - 1) (size src - splIx + 1))
       pure (left, right)
   | otherwise = runST $ do -- inserted element ends up in dstR
-    let left = clone src 0 splIx
-    dstR <- replicateMutable (size src + 1 - splIx) x
-    copy dstR 0 src splIx (insIx - splIx)
-    copy dstR (insIx - splIx + 1) src insIx (size src - insIx)
+    let left = clone (slice src 0 splIx)
+    dstR <- replicateMut (size src + 1 - splIx) x
+    copy dstR 0 (slice src splIx (insIx - splIx))
+    copy dstR (insIx - splIx + 1) (slice src insIx (size src - insIx))
     right <- unsafeFreeze dstR
     pure (left, right)
 
@@ -75,8 +75,8 @@ replace1To2 :: (Contiguous arr, Element arr a)
 replace1To2 !src !i x y = runST $ do
   -- FIXME I may be able to eliminate a memset for primarrays
   let len0 = size src
-  dst <- replicateMutable (len0 + 1) x
-  copy dst 0 src 0 i
+  dst <- replicateMut (len0 + 1) x
+  copy dst 0 (slice src 0 i)
   write dst (i + 1) y
-  copy dst (i + 2) src (i + 1) (len0 - i - 1)
+  copy dst (i + 2) (slice src (i + 1) (len0 - i - 1))
   unsafeFreeze dst

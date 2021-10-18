@@ -112,12 +112,12 @@ instance TQC.Arbitrary v => TQC.Arbitrary (BTree v) where
              | ksz == 1 -> []
              | otherwise ->
                  [ BTree.Branch
-                     { keys = Arr.clone keys 1 (ksz - 1)
-                     , children = Arr.clone children 1 (csz - 1)
+                     { keys = Arr.clone (Arr.slice keys 1 (ksz - 1))
+                     , children = Arr.clone (Arr.slice children 1 (csz - 1))
                      }
                  , BTree.Branch
-                     { keys = Arr.clone keys 0 (ksz - 1)
-                     , children = Arr.clone children 0 (csz - 1)
+                     { keys = Arr.clone (Arr.slice keys 0 (ksz - 1))
+                     , children = Arr.clone (Arr.slice children 0 (csz - 1))
                      }
                  ]
     BTree.Leaf{keys,values} ->
@@ -130,12 +130,12 @@ instance TQC.Arbitrary v => TQC.Arbitrary (BTree v) where
              | sz == 1 -> [BTree.empty]
              | otherwise -> 
                  [ BTree.Leaf
-                     { keys = Arr.clone keys 1 (sz - 1)
-                     , values = Arr.clone values 1 (sz - 1)
+                     { keys = Arr.clone (Arr.slice keys 1 (sz - 1))
+                     , values = Arr.clone (Arr.slice values 1 (sz - 1))
                      }
                  , BTree.Leaf
-                     { keys = Arr.clone keys 0 (sz - 1)
-                     , values = Arr.clone values 0 (sz - 1)
+                     { keys = Arr.clone (Arr.slice keys 0 (sz - 1))
+                     , values = Arr.clone (Arr.slice values 0 (sz - 1))
                      }
                  ]
 

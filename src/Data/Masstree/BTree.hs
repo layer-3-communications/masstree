@@ -192,9 +192,9 @@ upsertF f !k root = go root <&> \case
                 Branch {keys = keys', children = children'}
               else
                 let at = (Arr.size children `div` 2) + 1
-                    keysL' = Arr.clone keys' 0 (at - 1)
+                    keysL' = Arr.clone (Arr.slice keys' 0 (at - 1))
                     keyM' = Arr.index keys' (at - 1)
-                    keysR' = Arr.clone keys' at (Arr.size keys' - at)
+                    keysR' = Arr.clone (Arr.slice keys' at (Arr.size keys' - at))
                     (childrenL, childrenR) = Arr.splitAt children' at
                     left' = Branch {keys = keysL', children = childrenL}
                     right' = Branch {keys = keysR', children = childrenR}
