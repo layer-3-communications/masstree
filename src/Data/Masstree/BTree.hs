@@ -1,6 +1,8 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE MagicHash #-}
+{-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
@@ -83,7 +85,7 @@ data BTree v
       --
       -- INVARIANT: @keys@ and @values@ are the same length and non-empty
     }
-  deriving stock (Functor)
+  deriving stock (Functor,Foldable,Traversable)
 
 -- | /O(1)/ Is the map empty?
 null :: BTree v -> Bool
